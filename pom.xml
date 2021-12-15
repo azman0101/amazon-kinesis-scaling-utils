@@ -6,7 +6,7 @@
 	<artifactId>kinesis-scaling-utils</artifactId>
 	<version>.9.8.4</version>
 	<properties>
-		<sdk-version>2.15.77</sdk-version>
+		<sdk-version>2.17.88</sdk-version>
 	</properties>
 	<licenses>
 		<license>
