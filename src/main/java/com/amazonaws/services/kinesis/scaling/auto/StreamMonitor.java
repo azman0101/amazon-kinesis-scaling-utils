@@ -253,12 +253,21 @@ public class StreamMonitor implements Runnable {
 			finalScaleDirection = (getVote == null ? putVote : getVote);
 		}
 
+		LOG.debug(String.format("Determined Scaling Direction %s", finalScaleDirection));
+
 		try {
 			int currentShardCount = this.scaler.getOpenShardCount(this.config.getStreamName());
 
-			// if the metric stats indicate a scale up or down, then do the
-			// action
+			LOG.debug(String.format("Current Shard Count: %s", currentShardCount));
+
+			// if the metric stats indicate a scale up or down, then do the action
+			Integer minShards = this.config.getMinShards();
+			Integer maxShards = this.config.getMaxShards();
+
 			if (finalScaleDirection.equals(ScaleDirection.UP)) {
+				Integer scaleCount = this.config.getScaleUp().getScaleCount();
+				Integer scalePct = this.config.getScaleUp().getScalePct();
+
 				// check the cool down interval
 				if (lastScaleUp != null
 						&& now.minusMinutes(this.config.getScaleUp().getCoolOffMins()).isBefore(lastScaleUp)) {
@@ -267,33 +276,26 @@ public class StreamMonitor implements Runnable {
 							this.config.getStreamName(), this.config.getScaleUp().getCoolOffMins()));
 				} else {
 					// submit a scale up task
-					Integer scaleUpCount = this.config.getScaleUp().getScaleCount();
 
-					int newTarget = 1;
-					if (scaleUpCount != null) {
-						newTarget = currentShardCount + scaleUpCount;
-					} else {
-						// scaling on %
-						newTarget = new Double(
-								Math.ceil(currentShardCount * new Double(this.config.getScaleUp().getScalePct()) / 100))
-										.intValue();
-					}
+					int newTarget = StreamScalingUtils.getNewShardCount(currentShardCount, scaleCount, scalePct,
+							ScaleDirection.UP, minShards, maxShards);
+
+					LOG.debug(String.format("Calculated new Target Shard Count of %s", newTarget));
 
 					if (newTarget != currentShardCount && newTarget > 0) {
 						LOG.info(String.format(
 								"Requesting Scale Up of Stream %s by %s to %s as %s has been above %s%% for %s Minutes",
-								this.config.getStreamName(),
-								(scaleUpCount != null) ? scaleUpCount : this.config.getScaleUp().getScalePct() + "%",
+								this.config.getStreamName(), (scaleCount != null) ? scaleCount : scalePct + "%",
 								newTarget, this.config.getScaleOnOperations().toString(),
 								this.config.getScaleUp().getScaleThresholdPct(),
 								this.config.getScaleUp().getScaleAfterMins()));
 
-						if (scaleUpCount != null) {
+						if (scaleCount != null) {
 							report = this.scaler.updateShardCount(this.config.getStreamName(), currentShardCount,
-									newTarget, this.config.getMinShards(), this.config.getMaxShards(), false);
+									newTarget, minShards, maxShards, false);
 						} else {
 							report = this.scaler.updateShardCount(this.config.getStreamName(), currentShardCount,
-									newTarget, this.config.getMinShards(), this.config.getMaxShards(), false);
+									newTarget, minShards, maxShards, false);
 
 						}
 
@@ -306,9 +308,15 @@ public class StreamMonitor implements Runnable {
 									this.config.getScaleUp().getNotificationARN(), "Kinesis Autoscaling - Scale Up",
 									(report == null ? "No Changes Made" : report.asJson()));
 						}
+					} else {
+						LOG.info(
+								"Not requesting a scaling action because new shard count equals current shard count, or new shard count is 0");
 					}
 				}
 			} else if (finalScaleDirection.equals(ScaleDirection.DOWN)) {
+				Integer scaleCount = this.config.getScaleDown().getScaleCount();
+				Integer scalePct = this.config.getScaleDown().getScalePct();
+
 				// check the cool down interval
 				if (lastScaleDown != null
 						&& now.minusMinutes(this.config.getScaleDown().getCoolOffMins()).isBefore(lastScaleDown)) {
@@ -317,28 +325,20 @@ public class StreamMonitor implements Runnable {
 							this.config.getStreamName(), this.config.getScaleDown().getCoolOffMins()));
 				} else {
 					// submit a scale down
-					Integer scaleDownCount = this.config.getScaleDown().getScaleCount();
 					try {
-						int newTarget = 1;
-						if (scaleDownCount != null) {
-							newTarget = currentShardCount - scaleDownCount;
-						} else {
-							newTarget = new Double(Math.floor(new Double(currentShardCount)
-									* (1D - (new Double(this.config.getScaleDown().getScalePct()) / 100D)))).intValue();
-						}
+						int newTarget = StreamScalingUtils.getNewShardCount(currentShardCount, scaleCount, scalePct,
+								ScaleDirection.DOWN, minShards, maxShards);
 
 						if (newTarget != currentShardCount && newTarget > 0) {
 							LOG.info(String.format(
 									"Requesting Scale Down of Stream %s by %s to %s as %s has been below %s%% for %s Minutes",
-									this.config.getStreamName(),
-									(scaleDownCount != null) ? scaleDownCount
-											: this.config.getScaleDown().getScalePct() + "%",
+									this.config.getStreamName(), (scaleCount != null) ? scaleCount : scalePct + "%",
 									newTarget, config.getScaleOnOperations().toString(),
 									this.config.getScaleDown().getScaleThresholdPct(),
 									this.config.getScaleDown().getScaleAfterMins()));
 
 							report = this.scaler.updateShardCount(this.config.getStreamName(), currentShardCount,
-									newTarget, this.config.getMinShards(), this.config.getMaxShards(), false);
+									newTarget, minShards, maxShards, false);
 
 							lastScaleDown = new DateTime(System.currentTimeMillis());
 
